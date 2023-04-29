@@ -1,36 +1,40 @@
+import re
+import subprocess
+from influxdb import InfluxDBClient
 
-import speedtest
-import time
-import socket
+# this calls the speedtest CLI (this is what i'm using to monitor the network speed)
+response = subprocess.Popen('/usr/bin/speedtest --accept-license --accept-gdpr', shell=True, stdout=subprocess.PIPE).stdout.read().decode('utf-8')
 
-# Define the IP address and port number of the laptop
-laptop_ip = "127.0.0.1"
-port = 500
+ping = re.search('Latency:\s+(.*?)\s', response, re.MULTILINE)
+download = re.search('Download:\s+(.*?)\s', response, re.MULTILINE)
+upload = re.search('Upload:\s+(.*?)\s', response, re.MULTILINE)
+jitter = re.search('Latency:.*?jitter:\s+(.*?)ms', response, re.MULTILINE)
 
-# Set up the speedtest object
-st = speedtest.Speedtest()
+# storing the data from the Speedtest CLI software that can be written to a python dictionary
+ping = ping.group(1)
+download = download.group(1)
+upload = upload.group(1)
+jitter = jitter.group(1)
 
-# Define a function to send the network data to the laptop
-def send_network_data(download_speed, upload_speed):
-    try:
-        # Create a socket connection to the laptop
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.connect((laptop_ip, port))
+# python dictionary to store data from my RPi
+# this data is then read from any IoT device to see what my internet speed is over say 12 hours.
+speed_data = [
+    {
+        "measurement" : "internet_speed",
+        "tags" : {
+            "host": "RaspberryPiCarlC"
+        },
+        "fields" : {
+            "download": float(download),
+            "upload": float(upload),
+            "ping": float(ping),
+            "jitter": float(jitter)
+        }
+    }
+]
+# instantiates the influxDBClient and connects to my InfluxDB database named "internetspeed"
+# this is where the data is stored from the python dictionary
+client = InfluxDBClient('localhost', 8086, 'CarlC', 'ee250', 'internetspeed')
 
-        # Send the download and upload speeds to the laptop
-        s.sendall(f"{download_speed},{upload_speed}".encode())
-        s.close()
-    except:
-        print("Unable to connect to laptop.")
-
-# Run the network test every hour for 12 hours
-for i in range(12):
-    # Get the upload and download speeds
-    download_speed = st.download() / 1000000.0
-    upload_speed = st.upload() / 1000000.0
-
-    # Send the network data to the laptop
-    send_network_data(download_speed, upload_speed)
-
-    # Wait for an hour before running the test again
-    time.sleep(3600)
+# this writes to my influxDB server and this is what allows me to use the data on grafana
+client.write_points(speed_data)
